@@ -6,7 +6,7 @@ from .models.database import db
 import os
 from dotenv import load_dotenv
 
-ALLOWED_ORIGINS = "*"
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
 
 socketio = SocketIO(cors_allowed_origins=ALLOWED_ORIGINS)
 
