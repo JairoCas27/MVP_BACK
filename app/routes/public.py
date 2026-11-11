@@ -1,10 +1,34 @@
 from decimal import Decimal
 from flask import Blueprint, request, jsonify
-from app.models.database import db, Order, OrderItem, Product, Feedback
+from flask_jwt_extended import jwt_required, get_jwt
+from app.models.database import db, Order, OrderItem, Product, Feedback, Client
 from app.utils.helpers import generate_tracking_id
-from app import socketio 
+from app import socketio
+from app.utils.email import send_receipt, send_status_update
 
 public_bp = Blueprint('public', __name__)
+
+ALLOWED_ORDER_TYPES = {'SALON', 'DELIVERY', 'RECOJO_TIENDA'}
+ALLOWED_PAYMENT_TYPES = {'EFECTIVO', 'YAPE', 'PLIN'}
+
+
+@public_bp.route('/products/<int:product_id>', methods=['GET'])
+def get_product(product_id):
+    product = Product.query.get(product_id)
+    if not product or not product.is_active:
+        return jsonify({'status': 'error', 'message': 'Producto no encontrado'}), 404
+    return jsonify({
+        'status': 'success',
+        'message': 'Producto obtenido',
+        'data': {
+            'id': product.id,
+            'name': product.name,
+            'description': product.description,
+            'includes': product.includes,
+            'price': float(product.price),
+            'image': product.image,
+        },
+    }), 200
 
 @public_bp.route('/products', methods=['GET'])
 def get_products():
@@ -29,19 +53,56 @@ def get_products():
 
 @public_bp.route('/orders', methods=['POST'])
 def create_order():
-    data = request.get_json()
-    if not data or 'items' not in data or len(data['items']) == 0:
-        return jsonify({
-            'status': 'error',
-            'message': 'El carrito está vacío'
-        }), 400
+    data = request.get_json(silent=True) or {}
+    items = data.get('items') or []
+    if not items:
+        return jsonify({'status': 'error', 'message': 'El carrito está vacío'}), 400
 
-    order_type = data.get('order_type')
-    if order_type not in ['DELIVERY', 'RECOJO_TIENDA']:
-        return jsonify({
-            'status': 'error',
-            'message': 'Tipo de orden inválido'
-        }), 400
+    customer_name = (data.get('customer_name') or '').strip()
+    customer_phone = (data.get('customer_phone') or '').strip()
+    customer_email = (data.get('customer_email') or '').strip()
+    if not customer_name or not customer_phone:
+        return jsonify({'status': 'error', 'message': 'Nombre y teléfono son obligatorios'}), 400
+
+    # If client logged in, use their email
+    if not customer_email:
+        try:
+            from flask_jwt_extended import get_jwt, verify_jwt_in_request
+            verify_jwt_in_request(optional=True)
+            claims = get_jwt()
+            if claims.get('role') == 'client':
+                from app.models.database import Client
+                c = Client.query.get(claims.get('client_id'))
+                if c:
+                    customer_email = c.email
+        except Exception:
+            pass
+
+    order_type = data.get('order_type', 'RECOJO_TIENDA')
+    if order_type not in ALLOWED_ORDER_TYPES:
+        return jsonify({'status': 'error', 'message': 'Tipo de orden inválido'}), 400
+
+    payment_type = data.get('payment_type', 'EFECTIVO')
+    if payment_type not in ALLOWED_PAYMENT_TYPES:
+        return jsonify({'status': 'error', 'message': 'Método de pago inválido'}), 400
+
+    delivery_address = (data.get('delivery_address') or '').strip()
+    if order_type == 'DELIVERY' and not delivery_address:
+        return jsonify({'status': 'error', 'message': 'Ingresa la dirección de entrega'}), 400
+
+    table_number = (data.get('table_number') or '').strip()
+    notes = (data.get('notes') or '').strip()
+
+    # Optional client identification via JWT
+    customer_id = None
+    try:
+        from flask_jwt_extended import get_jwt, verify_jwt_in_request
+        verify_jwt_in_request(optional=True)
+        claims = get_jwt()
+        if claims.get('role') == 'client':
+            customer_id = claims.get('client_id')
+    except Exception:
+        customer_id = None
 
     tracking_id = generate_tracking_id()
     while Order.query.get(tracking_id):
@@ -49,27 +110,33 @@ def create_order():
 
     total_amount = Decimal('0.00')
     order_items_to_insert = []
-    
-    for item in data['items']:
-        product = Product.query.get(item['product_id'])
+
+    for item in items:
+        try:
+            product_id = int(item['product_id'])
+            quantity = int(item['quantity'])
+        except (KeyError, ValueError, TypeError):
+            return jsonify({'status': 'error', 'message': 'Item inválido en el carrito'}), 400
+        if quantity <= 0:
+            return jsonify({'status': 'error', 'message': 'La cantidad debe ser mayor a 0'}), 400
+
+        product = Product.query.get(product_id)
         if not product or not product.is_active:
-            return jsonify({
-                'status': 'error',
-                'message': f"Producto ID {item['product_id']} no disponible"
-            }), 400
-        
-        quantity = int(item['quantity'])
+            return jsonify({'status': 'error', 'message': f"Producto ID {product_id} no disponible"}), 400
+
         unit_price = product.price
         subtotal = unit_price * quantity
         total_amount += subtotal
-        
+
+        options = (item.get('options') or '').strip() if isinstance(item, dict) else ''
         order_items_to_insert.append(
             OrderItem(
                 order_id=tracking_id,
                 product_id=product.id,
                 quantity=quantity,
                 unit_price=unit_price,
-                subtotal=subtotal
+                subtotal=subtotal,
+                options=options or None
             )
         )
 
@@ -83,16 +150,21 @@ def create_order():
             'product_name': prod.name if prod else 'Producto',
             'quantity': oi.quantity,
             'unit_price': float(oi.unit_price),
-            'subtotal': float(oi.subtotal)
+            'subtotal': float(oi.subtotal),
+            'options': oi.options
         })
 
     new_order = Order(
         id=tracking_id,
-        customer_name=data['customer_name'],
-        customer_phone=data['customer_phone'],
+        customer_id=customer_id,
+        customer_name=customer_name,
+        customer_email=customer_email or None,
+        customer_phone=customer_phone,
         order_type=order_type,
-        delivery_address=data.get('delivery_address', ''),
-        payment_type=data['payment_type'],
+        delivery_address=delivery_address,
+        table_number=table_number or None,
+        notes=notes or None,
+        payment_type=payment_type,
         delivery_fee=delivery_fee,
         total_amount=total_amount,
         status='PENDIENTE'
@@ -104,12 +176,20 @@ def create_order():
         db.session.bulk_save_objects(order_items_to_insert)
         db.session.commit()
 
+        try:
+            send_receipt(new_order, items_data_socket)
+        except Exception:
+            pass
+
         socketio.emit('nuevo_pedido', {
             'id': tracking_id,
+            'customer_id': customer_id,
             'customer_name': new_order.customer_name,
             'customer_phone': new_order.customer_phone,
             'order_type': new_order.order_type,
             'delivery_address': new_order.delivery_address,
+            'table_number': new_order.table_number,
+            'notes': new_order.notes,
             'payment_type': new_order.payment_type,
             'delivery_fee': float(new_order.delivery_fee),
             'total_amount': float(new_order.total_amount),
@@ -138,10 +218,15 @@ def create_order():
 def get_tracking(order_id):
     order = Order.query.get(order_id)
     if not order:
-        return jsonify({
-            'status': 'error',
-            'message': 'Pedido no encontrado'
-        }), 404
+        return jsonify({'status': 'error', 'message': 'Pedido no encontrado'}), 404
+
+    items = [{
+        'product_name': (Product.query.get(i.product_id).name if Product.query.get(i.product_id) else 'Producto'),
+        'quantity': i.quantity,
+        'unit_price': float(i.unit_price),
+        'subtotal': float(i.subtotal),
+        'options': i.options
+    } for i in order.items]
 
     return jsonify({
         'status': 'success',
@@ -150,25 +235,75 @@ def get_tracking(order_id):
             'id': order.id,
             'customer_name': order.customer_name,
             'order_type': order.order_type,
+            'payment_type': order.payment_type,
             'status': order.status,
             'total_amount': float(order.total_amount),
-            'created_at': order.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            'delivery_address': order.delivery_address,
+            'table_number': order.table_number,
+            'notes': order.notes,
+            'created_at': order.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            'items': items
         }
     }), 200
 
+
+@public_bp.route('/client/orders', methods=['GET'])
+@jwt_required()
+def client_orders():
+    claims = get_jwt()
+    if claims.get('role') != 'client':
+        return jsonify({'status': 'error', 'message': 'Acceso restringido'}), 403
+    client_id = claims.get('client_id')
+    orders = Order.query.filter_by(customer_id=client_id).order_by(Order.created_at.desc()).all()
+    data = []
+    for o in orders:
+        items = [{
+            'product_name': (Product.query.get(i.product_id).name if Product.query.get(i.product_id) else 'Producto'),
+            'quantity': i.quantity,
+            'subtotal': float(i.subtotal),
+            'options': i.options,
+        } for i in o.items]
+        data.append({
+            'id': o.id,
+            'order_type': o.order_type,
+            'payment_type': o.payment_type,
+            'status': o.status,
+            'total_amount': float(o.total_amount),
+            'created_at': o.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            'items': items,
+        })
+    return jsonify({'status': 'success', 'message': 'Pedidos obtenidos', 'data': data}), 200
+
+@public_bp.route('/feedbacks', methods=['GET'])
+def list_feedbacks():
+    feedbacks = Feedback.query.filter_by(is_visible=True).order_by(Feedback.created_at.desc()).limit(20).all()
+    data = [{
+        'id': f.id,
+        'customer_name': f.customer_name,
+        'phone': f.phone,
+        'message': f.message,
+        'rating': f.rating,
+        'created_at': f.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+    } for f in feedbacks]
+    return jsonify({'status': 'success', 'message': 'Opiniones obtenidas', 'data': data}), 200
+
 @public_bp.route('/feedbacks', methods=['POST'])
 def submit_feedback():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     if not data or 'message' not in data:
-        return jsonify({
-            'status': 'error',
-            'message': 'El mensaje es obligatorio'
-        }), 400
+        return jsonify({'status': 'error', 'message': 'El mensaje es obligatorio'}), 400
+
+    try:
+        rating = int(data.get('rating', 5))
+    except (ValueError, TypeError):
+        rating = 5
+    rating = max(1, min(5, rating))
 
     new_feedback = Feedback(
         customer_name=data.get('customer_name', 'Anónimo'),
         phone=data.get('phone', ''),
-        message=data['message']
+        message=data['message'],
+        rating=rating
     )
 
     try:

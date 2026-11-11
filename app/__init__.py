@@ -59,11 +59,27 @@ def create_app():
     from .routes.public import public_bp
     from .routes.admin import admin_bp
     from .routes.auth import auth_bp
+    from .routes.driver import driver_bp
+    from .routes.kitchen import kitchen_bp
 
     app.register_blueprint(public_bp, url_prefix='/api/public')
     app.register_blueprint(admin_bp, url_prefix='/api/admin')
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
+    app.register_blueprint(driver_bp, url_prefix='/api/driver')
+    app.register_blueprint(kitchen_bp, url_prefix='/api/kitchen')
 
     from .sockets import events
+
+    from flask import send_from_directory
+
+    uploads_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'uploads')
+    uploads_dir = os.path.abspath(uploads_dir)
+    os.makedirs(uploads_dir, exist_ok=True)
+
+    @app.route('/uploads/<path:filename>')
+    def uploaded_file(filename):
+        return send_from_directory(uploads_dir, filename)
+
+    app.config['UPLOADS_DIR'] = uploads_dir
 
     return app
