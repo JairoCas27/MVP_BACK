@@ -332,8 +332,20 @@ def init_database():
         return jsonify({'status': 'error', 'message': 'No autorizado'}), 403
     from app.models.database import db, Admin, Client, Driver, Kitchen, Product
     from werkzeug.security import generate_password_hash
-    db.drop_all()
-    db.create_all()
+    try:
+        db.session.execute(db.text('DROP SCHEMA public CASCADE'))
+        db.session.execute(db.text('CREATE SCHEMA public'))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        try:
+            db.drop_all()
+        except Exception:
+            pass
+    try:
+        db.create_all()
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': f'Error creando tablas: {str(e)}'}), 500
 
     if not Admin.query.filter_by(username='admin@demo.com').first():
         db.session.add(Admin(username='admin@demo.com', password_hash=generate_password_hash('admin123')))
