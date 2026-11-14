@@ -592,6 +592,22 @@ def admin_create_kitchen():
     db.session.commit()
     return jsonify({'status': 'success', 'message': 'Cocina creada', 'data': {'id': k.id}}), 201
 
+@admin_bp.route('/kitchens/<int:kitchen_id>', methods=['PUT'])
+@jwt_required()
+def admin_update_kitchen(kitchen_id):
+    if not _admin_only():
+        return jsonify({'status': 'error', 'message': 'Acceso restringido'}), 403
+    k = Kitchen.query.get(kitchen_id)
+    if not k:
+        return jsonify({'status': 'error', 'message': 'Cocina no encontrada'}), 404
+    data = request.get_json(silent=True) or {}
+    if 'is_active' in data:
+        k.is_active = bool(data.get('is_active'))
+    if 'name' in data:
+        k.name = (data.get('name') or '').strip() or k.name
+    db.session.commit()
+    return jsonify({'status': 'success', 'message': 'Cocina actualizada'}), 200
+
 @admin_bp.route('/kitchens/<int:kitchen_id>', methods=['DELETE'])
 @jwt_required()
 def admin_delete_kitchen(kitchen_id):
