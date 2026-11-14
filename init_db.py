@@ -28,9 +28,8 @@ with app.app_context():
         kitchen = Kitchen(name='Cocina Demo', username='cocina@demo.com', password_hash=generate_password_hash('cocina123'), is_active=True)
         db.session.add(kitchen)
 
-    # Products seed (only if empty)
-    if Product.query.count() == 0:
-        sample_products = [
+    # Products seed (add missing by name)
+    sample_products = [
             {"name": "Pollo a la Brasa Entero", "description": "Pollo entero a la brasa con papas y ensalada", "price": 45.00, "image": "https://framerusercontent.com/images/psjgAUJ76yTxyTp51RByNg6JYjs.jpg?scale-down-to=1024&width=2682&height=1602", "includes": "Incluye: pollo a la brasa entero, papas fritas, ensalada, mayonesa, aji y cremas."},
             {"name": "1/2 Pollo a la Brasa", "description": "Medio pollo a la brasa con papas", "price": 25.00, "image": "https://framerusercontent.com/images/VcqFSFyMjFJD90BjE0JLOuSYw.jpg?scale-down-to=1024&width=3000&height=1482", "includes": "Incluye: medio pollo a la brasa, papas fritas, ensalada, mayonesa, aji y cremas."},
             {"name": "1/4 Pollo a la Brasa (pecho)", "description": "Cuarto de pollo a la brasa (pecho)", "price": 14.00, "image": "https://framerusercontent.com/images/8MRbVnxxXoLVgWNVGonH04qTM.jpg?scale-down-to=1024&width=3000&height=1363", "includes": "Incluye: cuarto de pollo (pecho), papas fritas, ensalada, mayonesa, aji y cremas."},
@@ -60,7 +59,9 @@ with app.app_context():
             {"name": "Ensalada Cesar", "description": "Ensalada cesar con pollo", "price": 10.00, "image": "https://framerusercontent.com/images/2SW7sWzterGNO2Utmq3KXXFA.jpg?scale-down-to=1024&width=1200&height=800", "includes": "Incluye: ensalada cesar."},
             {"name": "Pollo al Horno", "description": "Pollo al horno con hierbas", "price": 28.00, "image": "https://framerusercontent.com/images/psjgAUJ76yTxyTp51RByNg6JYjs.jpg?scale-down-to=1024&width=2682&height=1602", "includes": "Incluye: pollo al horno."},
         ]
-        for p in sample_products:
+    existing_names = {p.name for p in Product.query.all()}
+    for p in sample_products:
+        if p["name"] not in existing_names:
             db.session.add(Product(name=p["name"], description=p["description"], includes=p.get("includes"), price=p["price"], image=p["image"], is_active=True))
 
     db.session.commit()
