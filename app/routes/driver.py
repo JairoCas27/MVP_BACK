@@ -29,6 +29,7 @@ def _serialize(o):
         'customer_name': o.customer_name,
         'customer_phone': o.customer_phone,
         'delivery_address': o.delivery_address,
+        'order_type': o.order_type,
         'status': o.status,
         'total_amount': float(o.total_amount),
         'payment_type': o.payment_type,
