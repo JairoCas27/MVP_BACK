@@ -10,7 +10,6 @@ ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
 
 socketio = SocketIO(cors_allowed_origins=ALLOWED_ORIGINS)
 
-
 def create_app():
     load_dotenv()
     app = Flask(__name__)
@@ -61,12 +60,14 @@ def create_app():
     from .routes.auth import auth_bp
     from .routes.driver import driver_bp
     from .routes.kitchen import kitchen_bp
+    from .routes.ai import ai_bp
 
     app.register_blueprint(public_bp, url_prefix='/api/public')
     app.register_blueprint(admin_bp, url_prefix='/api/admin')
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(driver_bp, url_prefix='/api/driver')
     app.register_blueprint(kitchen_bp, url_prefix='/api/kitchen')
+    app.register_blueprint(ai_bp, url_prefix='/api/ai')
 
     from .sockets import events
 

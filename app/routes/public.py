@@ -65,7 +65,6 @@ def create_order():
     if not customer_name or not customer_phone:
         return jsonify({'status': 'error', 'message': 'Nombre y teléfono son obligatorios'}), 400
 
-    # If client logged in, use their email
     if not customer_email:
         try:
             from flask_jwt_extended import get_jwt, verify_jwt_in_request
@@ -94,7 +93,6 @@ def create_order():
     table_number = (data.get('table_number') or '').strip()
     notes = (data.get('notes') or '').strip()
 
-    # Optional client identification via JWT
     customer_id = None
     try:
         from flask_jwt_extended import get_jwt, verify_jwt_in_request
@@ -277,7 +275,7 @@ def client_orders():
 
 @public_bp.route('/feedbacks', methods=['GET'])
 def list_feedbacks():
-    feedbacks = Feedback.query.filter_by(is_visible=True).order_by(Feedback.created_at.desc()).limit(20).all()
+    feedbacks = Feedback.query.filter_by(is_visible=True).order_by(Feedback.created_at.desc()).limit(6).all()
     data = [{
         'id': f.id,
         'customer_name': f.customer_name,
