@@ -86,4 +86,10 @@ def create_app():
 
     app.config['UPLOADS_DIR'] = uploads_dir
 
+    try:
+        from .swagger import register_swagger
+        register_swagger(app)
+    except Exception as e:
+        print(f"Swagger no disponible: {e}")
+
     return app
