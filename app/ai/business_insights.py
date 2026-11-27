@@ -1,19 +1,22 @@
 from datetime import datetime
-import numpy as np
-import pandas as pd
-from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.preprocessing import PolynomialFeatures
-from sklearn.pipeline import make_pipeline
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, r2_score, accuracy_score
-from sklearn.svm import SVC
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.metrics import f1_score
 from app.models.database import Order
 
+
 def get_human_readable_ai_insights():
+    # Import pesado diferido: numpy/pandas/scikit-learn solo se cargan cuando
+    # se pide este endpoint, no durante el arranque del servidor.
+    import numpy as np
+    import pandas as pd
+    from sklearn.linear_model import LinearRegression, LogisticRegression
+    from sklearn.preprocessing import PolynomialFeatures
+    from sklearn.pipeline import make_pipeline
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import mean_squared_error, r2_score, accuracy_score, f1_score
+    from sklearn.svm import SVC
+    from sklearn.neighbors import KNeighborsClassifier
+    from sklearn.tree import DecisionTreeClassifier
+    from sklearn.ensemble import GradientBoostingClassifier
+
     orders = Order.query.all()
     
     if len(orders) < 10:

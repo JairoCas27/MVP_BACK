@@ -4,7 +4,6 @@ from flask import Blueprint, jsonify, request
 from flask_cors import cross_origin
 from flask_jwt_extended import get_jwt, jwt_required
 from sqlalchemy import or_
-from app.ai.business_insights import get_human_readable_ai_insights
 from app.models.database import Order, Product, db
 
 ai_bp = Blueprint("ai", __name__)
@@ -221,6 +220,7 @@ def get_ai_recommendations():
 def business_human_insights():
     if request.method == "OPTIONS":
         return "", 200
+    from app.ai.business_insights import get_human_readable_ai_insights
     data = get_human_readable_ai_insights()
     return jsonify({
         "status": "success",
