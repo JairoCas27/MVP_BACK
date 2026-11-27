@@ -7,7 +7,8 @@ services:
     name: mvp-back
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -w 1 "app:create_app()"
+    startCommand: gunicorn --worker-class eventlet -w 1 run:app
+    healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -17,3 +18,5 @@ services:
         generateValue: true
       - key: PYTHON_VERSION
         value: 3.12.0
+      - key: ALLOWED_ORIGINS
+        value: https://lafogatapolleria999.vercel.app,https://lafogatapolleria999-git-dev-jairocastillo874-3299s-projects.vercel.app

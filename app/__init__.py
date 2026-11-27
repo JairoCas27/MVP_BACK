@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from flask_socketio import SocketIO
@@ -6,13 +6,19 @@ from .models.database import db
 import os
 from dotenv import load_dotenv
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
+DEFAULT_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
 
-socketio = SocketIO(cors_allowed_origins=ALLOWED_ORIGINS)
+socketio = SocketIO(cors_allowed_origins="*")
 
 def create_app():
     load_dotenv()
     app = Flask(__name__)
+
+    configured = os.getenv("ALLOWED_ORIGINS", "")
+    allowed_origins = [o.strip() for o in configured.split(",") if o.strip()] or DEFAULT_ORIGINS
 
     database_url = os.getenv('DATABASE_URL')
 
@@ -47,13 +53,19 @@ def create_app():
 
     CORS(
         app,
-        resources={r"/api/*": {"origins": ALLOWED_ORIGINS}},
+        resources={r"/api/*": {"origins": allowed_origins}},
         supports_credentials=True
     )
 
     db.init_app(app)
     JWTManager(app)
     socketio.init_app(app)
+
+    with app.app_context():
+        try:
+            db.create_all()
+        except Exception as e:
+            print(f"[DB] No se pudieron crear las tablas al arrancar: {e}")
 
     from .routes.public import public_bp
     from .routes.admin import admin_bp
@@ -83,6 +95,21 @@ def create_app():
     @app.route('/uploads/<path:filename>')
     def uploaded_file(filename):
         return send_from_directory(uploads_dir, filename)
+
+    @app.route('/')
+    @app.route('/health')
+    def health_check():
+        info = {
+            "status": "ok",
+            "database_configured": bool(os.getenv("DATABASE_URL")),
+        }
+        try:
+            from sqlalchemy import inspect
+            info["tables"] = inspect(db.engine).get_table_names()
+        except Exception as e:
+            info["status"] = "degraded"
+            info["db_error"] = str(e)
+        return jsonify(info), 200 if info["status"] == "ok" else 503
 
     app.config['UPLOADS_DIR'] = uploads_dir
 
