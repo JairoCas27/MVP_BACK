@@ -1,7 +1,11 @@
 from decimal import Decimal
+import random
+import string
+from datetime import datetime, timedelta
+from werkzeug.security import generate_password_hash
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt
-from app.models.database import db, Order, OrderItem, Product, Feedback, Client
+from app.models.database import db, Order, OrderItem, Product, Feedback, Client, Driver
 from app.utils.helpers import generate_tracking_id
 from app import socketio
 from app.utils.email import send_receipt, send_status_update
@@ -393,3 +397,138 @@ def init_database():
 
     db.session.commit()
     return jsonify({'status': 'success', 'message': 'Base de datos inicializada correctamente.'}), 200
+
+
+@public_bp.route('/seed-demo', methods=['GET'])
+def seed_demo_data():
+    """Seed idempotente: agrega clientes, pedidos y opiniones sin borrar datos existentes."""
+    if request.args.get('secret', '') != os.getenv('INIT_SECRET', 'init-secret-2026'):
+        return jsonify({'status': 'error', 'message': 'No autorizado'}), 403
+
+    rng = random.Random(20261127)
+    first_names = [
+        "Juan", "Carlos", "Luis", "Jose", "Miguel", "Pedro", "Ana", "Maria",
+        "Carmen", "Rosa", "Jorge", "Manuel", "David", "Daniel", "Alejandro",
+        "Sofia", "Lucia", "Elena", "Valeria", "Camila", "Mateo", "Santiago",
+        "Gabriel", "Fernando", "Ricardo", "Alberto", "Patricia", "Claudia",
+        "Monica", "Diana", "Diego", "Paola", "Andres", "Natalia", "Rafael",
+    ]
+    last_names = [
+        "Perez", "Gomez", "Rodriguez", "Lopez", "Garcia", "Martinez", "Sanchez",
+        "Fernandez", "Gonzalez", "Torres", "Ramirez", "Flores", "Rivera", "Diaz",
+        "Cruz", "Morales", "Ortiz", "Gutierrez", "Chavez", "Ramos", "Castillo",
+        "Silva", "Mendoza", "Vargas", "Rojas", "Medina", "Herrera", "Castro",
+        "Romero", "Nunez", "Campos", "Vega", "Rios", "Guerrero", "Bustos",
+    ]
+
+    added_clients = 0
+    existing_emails = {c.email for c in Client.query.all()}
+    for i in range(1, 36):
+        email = f"cliente{i:02d}@demo.com"
+        if email in existing_emails:
+            continue
+        first = first_names[i - 1]
+        last = last_names[i - 1]
+        db.session.add(Client(
+            name=f"{first} {last}",
+            email=email,
+            dni=f"{80000000 + i}",
+            phone=f"9{70000000 + i}",
+            address=f"Av. Principal {100 + i}, Lima",
+            photo=f"https://i.pravatar.cc/150?img={(i % 70) + 1}",
+            is_active=True,
+            password_hash=generate_password_hash('cliente123'),
+        ))
+        added_clients += 1
+    db.session.commit()
+
+    clients = Client.query.filter(Client.email.like('cliente%@demo.com')).all()
+    products = Product.query.filter_by(is_active=True).all()
+    drivers = Driver.query.all()
+    if not clients or not products:
+        return jsonify({'status': 'error', 'message': 'No hay clientes o productos para generar pedidos'}), 500
+
+    added_orders = 0
+    existing_order_ids = {o.id for o in Order.query.all()}
+    base_date = datetime.utcnow() - timedelta(days=45)
+    order_types = ['SALON', 'DELIVERY', 'RECOJO_TIENDA']
+    payments = ['YAPE', 'PLIN', 'EFECTIVO']
+    for _ in range(120):
+        order_id = ''.join(rng.choices(string.ascii_uppercase + string.digits, k=6))
+        if order_id in existing_order_ids:
+            continue
+        existing_order_ids.add(order_id)
+
+        client = rng.choice(clients)
+        product = rng.choice(products)
+        order_type = rng.choice(order_types)
+        quantity = rng.randint(1, 3)
+        subtotal = round(float(product.price) * quantity, 2)
+        fee = 6.0 if order_type == 'DELIVERY' else 0.0
+        total = round(subtotal + fee + rng.uniform(1.0, 6.0), 2)
+        created = base_date + timedelta(
+            days=rng.randint(0, 44),
+            hours=rng.randint(11, 22),
+            minutes=rng.randint(0, 59),
+        )
+        finished = rng.random() < 0.75
+
+        db.session.add(Order(
+            id=order_id,
+            customer_id=client.id,
+            customer_name=client.name,
+            customer_email=client.email,
+            customer_phone=client.phone,
+            order_type=order_type,
+            delivery_address=client.address if order_type == 'DELIVERY' else '',
+            payment_type=rng.choice(payments),
+            delivery_fee=fee,
+            total_amount=total,
+            status='FINALIZADO' if finished else rng.choice(['PENDIENTE', 'EN_CAMINO', 'LISTO_PARA_RECOJO']),
+            driver_id=rng.choice(drivers).id if drivers and order_type == 'DELIVERY' else None,
+            driver_name=rng.choice(drivers).name if drivers and order_type == 'DELIVERY' else None,
+            created_at=created,
+            delivered_at=created + timedelta(minutes=rng.randint(20, 60)) if finished else None,
+        ))
+        db.session.add(OrderItem(
+            order_id=order_id,
+            product_id=product.id,
+            quantity=quantity,
+            unit_price=product.price,
+            subtotal=subtotal,
+        ))
+        added_orders += 1
+
+    added_feedbacks = 0
+    messages = [
+        "Excelente pollo, llegó caliente y a tiempo.",
+        "Muy buena atención, repetiré sin duda.",
+        "Ricas las papas, el reparto fue rápido.",
+        "Buen sabor y buena presentación.",
+        "El pedido llegó antes de lo esperado.",
+    ]
+    if Feedback.query.count() < 20:
+        for i in range(Feedback.query.count(), 20):
+            client = clients[i % len(clients)]
+            db.session.add(Feedback(
+                customer_name=client.name,
+                phone=client.phone,
+                message=messages[i % len(messages)],
+                rating=rng.randint(4, 5),
+                is_visible=True,
+            ))
+            added_feedbacks += 1
+
+    db.session.commit()
+    return jsonify({
+        'status': 'success',
+        'message': 'Datos de demostracion insertados correctamente',
+        'data': {
+            'clientes_agregados': added_clients,
+            'clientes_totales': Client.query.count(),
+            'pedidos_agregados': added_orders,
+            'pedidos_totales': Order.query.count(),
+            'opiniones_agregadas': added_feedbacks,
+            'opiniones_totales': Feedback.query.count(),
+        },
+    }), 200
